@@ -1,5 +1,5 @@
 // Offline support: network first so updates arrive promptly, cache as a fallback.
-const CACHE = 'bbl-v4';
+const CACHE = 'bbl-v5';
 const SHELL = ['./', './index.html', './app.js', './style.css', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png'];
 
@@ -25,7 +25,8 @@ function store(e, res) {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   if (e.request.url.startsWith('https://cdn.jsdelivr.net/')) {
-    // versioned decoder: cache first so HEIC keeps working offline after the first use
+    // Versioned HEIC and LaTeX renderers: cache first so each keeps working
+    // offline after its first use.
     e.respondWith(caches.match(e.request).then((r) => r || fetch(e.request).then((res) => store(e, res)))
       .catch(() => Response.error()));   // offline and not cached yet: fail quietly, like a normal failed fetch
     return;

@@ -14,6 +14,10 @@ const PRESETS_KEY = 'bbl.customColours';
 // 10-bit HDR files newer iPhones produce), fetched only the first time such a
 // file is opened. The "csp" build avoids eval so it also runs under a strict CSP.
 const HEIC_DECODER_URL = 'https://cdn.jsdelivr.net/npm/heic-to@1.5.2/dist/csp/heic-to.min.js';
+// MathJax's SVG output is self-contained, so it can be rasterised onto the
+// canvas for both the preview and the full-resolution saved photo. It is only
+// fetched when a label wrapped in $...$, $$...$$, \(...\), or \[...\] is used.
+const MATHJAX_URL = 'https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js';
 const IMAGE_NAME = /\.(jpe?g|png|webp|gif|bmp|avif|tiff?|heic|heif)$/i;
 const HEIC_NAME = /\.hei[cf]$/i;
 const OUTPUT_NAME = /_labeled(_\d+)?\.[^.]+$/i;
@@ -74,6 +78,117 @@ export function metrics(fullWidth, style, scale) {
   return { fontPx, pad: Math.max(2, fontPx * 0.3), lineW: Math.max(2, fontPx * 0.16) };
 }
 
+/** Split a label into plain text and TeX delimited by dollar or backslash pairs. */
+function latexParts(text) {
+  const s = String(text || '');
+  const parts = [];
+  const escaped = (at) => {
+    let slashes = 0;
+    while (at > 0 && s[--at] === '\\') slashes++;
+    return slashes % 2 === 1;
+  };
+  let plainStart = 0, i = 0;
+  while (i < s.length) {
+    let open, close, start;
+    if (s.startsWith('$$', i) && !escaped(i)) { open = '$$'; close = '$$'; start = i + 2; }
+    else if (s.startsWith('\\(', i) && !escaped(i)) { open = '\\('; close = '\\)'; start = i + 2; }
+    else if (s.startsWith('\\[', i) && !escaped(i)) { open = '\\['; close = '\\]'; start = i + 2; }
+    else if (s[i] === '$' && !escaped(i)) { open = '$'; close = '$'; start = i + 1; }
+    else { i++; continue; }
+    let end = s.indexOf(close, start);
+    while (end >= 0 && open === '$' && escaped(end)) end = s.indexOf(close, end + 1);
+    if (end < 0 || end === start) { i += open.length; continue; }
+    if (i > plainStart) parts.push({ text: s.slice(plainStart, i) });
+    parts.push({ tex: s.slice(start, end).trim() });
+    i = end + close.length;
+    plainStart = i;
+  }
+  if (plainStart < s.length) parts.push({ text: s.slice(plainStart) });
+  return parts.some((part) => part.tex) ? parts : [{ text: s }];
+}
+
+/** Return the TeX inside a whole-label math delimiter, or null for plain/mixed text. */
+export function latexSource(text) {
+  const parts = latexParts(text);
+  return parts.length === 1 && parts[0].tex ? parts[0].tex : null;
+}
+
+// Formula bitmaps are keyed by source, colour, and rendered em size. Quarter-
+// pixel buckets prevent a resize from accumulating nearly identical images.
+const LATEX_CACHE = new Map();
+const LATEX_JOBS = new Map();
+const latexEm = (fontPx) => Math.max(1, Math.round(fontPx * 4) / 4);
+const latexKey = (source, colour, fontPx) => `${latexEm(fontPx)}\u0000${colour}\u0000${source}`;
+
+function loadMathJax() {
+  if (globalThis.MathJax && typeof globalThis.MathJax.tex2svgPromise === 'function') return Promise.resolve(globalThis.MathJax);
+  if (loadMathJax.promise) return loadMathJax.promise;
+  loadMathJax.promise = new Promise((resolve, reject) => {
+    // This configuration must exist before the component script runs.
+    globalThis.MathJax = { startup: { typeset: false } };
+    const script = document.createElement('script');
+    script.src = MATHJAX_URL;
+    script.async = true;
+    script.onload = () => {
+      Promise.resolve(globalThis.MathJax.startup && globalThis.MathJax.startup.promise)
+        .then(() => resolve(globalThis.MathJax), reject);
+    };
+    script.onerror = () => reject(new Error('LaTeX renderer could not be downloaded'));
+    document.head.appendChild(script);
+  }).catch((err) => { loadMathJax.promise = null; throw err; });
+  return loadMathJax.promise;
+}
+
+function loadSvgImage(svg) {
+  return new Promise((resolve, reject) => {
+    const blob = new Blob([svg], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
+    image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error('LaTeX SVG could not be rasterised')); };
+    image.src = url;
+  });
+}
+
+async function makeLatex(source, colour, fontPx) {
+  const em = latexEm(fontPx);
+  const key = latexKey(source, colour, em);
+  if (LATEX_CACHE.has(key)) return LATEX_CACHE.get(key);
+  if (LATEX_JOBS.has(key)) return LATEX_JOBS.get(key);
+  const job = (async () => {
+    const mathjax = await loadMathJax();
+    const container = await mathjax.tex2svgPromise(source, { display: false });
+    const svg = container.querySelector('svg');
+    if (!svg) throw new Error('LaTeX did not produce an SVG');
+    const viewBox = (svg.getAttribute('viewBox') || '').trim().split(/[ ,]+/).map(Number);
+    if (viewBox.length !== 4 || viewBox.some((n) => !Number.isFinite(n))) throw new Error('LaTeX SVG has no usable bounds');
+    // MathJax's SVG coordinate system uses 1000 units per em.
+    const width = Math.max(1, viewBox[2] * em / 1000);
+    const height = Math.max(1, viewBox[3] * em / 1000);
+    svg.setAttribute('width', `${width}px`);
+    svg.setAttribute('height', `${height}px`);
+    svg.setAttribute('color', colour);
+    svg.style.color = colour;
+    const image = await loadSvgImage(new XMLSerializer().serializeToString(svg));
+    const rendered = { image, width, height };
+    LATEX_CACHE.set(key, rendered);
+    return rendered;
+  })().finally(() => LATEX_JOBS.delete(key));
+  LATEX_JOBS.set(key, job);
+  return job;
+}
+
+/** Prepare formula bitmaps before a synchronous canvas draw. */
+export async function prepareLatex(labels, fullWidth, style, scale) {
+  const { fontPx } = metrics(fullWidth, style, scale);
+  const unique = new Map();
+  for (const lb of labels) {
+    const colour = outlineFor(lb.fill);
+    for (const part of latexParts(lb.text)) if (part.tex) unique.set(latexKey(part.tex, colour, fontPx), [part.tex, colour]);
+  }
+  await Promise.all([...unique.values()].map(([source, colour]) => makeLatex(source, colour, fontPx)));
+}
+
 function roundRect(ctx, [x0, y0, x1, y1], r) {
   const w = x1 - x0, h = y1 - y0;
   r = Math.min(r, w / 2, h / 2);
@@ -120,12 +235,20 @@ export function drawLabels(ctx, labels, fullWidth, style, scale, ox = 0, oy = 0)
   const boxes = [];
   for (const lb of labels) {
     const cx = lb.x * scale + ox, cy = lb.y * scale + oy;
-    const m = ctx.measureText(lb.text);
-    const asc = m.actualBoundingBoxAscent || fontPx * 0.4;
-    const desc = m.actualBoundingBoxDescent || fontPx * 0.4;
-    const box = [cx - m.width / 2 - pad, cy - asc - pad * 0.6, cx + m.width / 2 + pad, cy + desc + pad * 0.6];
-    boxes.push(box);
     const outline = outlineFor(lb.fill);
+    const parts = latexParts(lb.text).map((part) => {
+      if (part.tex) return { ...part, latex: LATEX_CACHE.get(latexKey(part.tex, outline, fontPx)) };
+      return { ...part, measure: ctx.measureText(part.text) };
+    });
+    const width = parts.reduce((sum, part) => sum + (part.tex ? (part.latex ? part.latex.width : ctx.measureText(part.tex).width) : part.measure.width), 0);
+    const asc = Math.max(fontPx * 0.4, ...parts.map((part) => part.tex
+      ? (part.latex ? part.latex.height / 2 : fontPx * 0.4)
+      : (part.measure.actualBoundingBoxAscent || fontPx * 0.4)));
+    const desc = Math.max(fontPx * 0.4, ...parts.map((part) => part.tex
+      ? (part.latex ? part.latex.height / 2 : fontPx * 0.4)
+      : (part.measure.actualBoundingBoxDescent || fontPx * 0.4)));
+    const box = [cx - width / 2 - pad, cy - asc - pad * 0.6, cx + width / 2 + pad, cy + desc + pad * 0.6];
+    boxes.push(box);
     if (lb.tip) {
       const side = Math.max(4, (fullWidth * lb.marker) / 100 * scale);
       drawLeader(ctx, box, cx, cy, lb.tip[0] * scale + ox, lb.tip[1] * scale + oy, side, lineW, edge, lb.fill, outline);
@@ -134,7 +257,20 @@ export function drawLabels(ctx, labels, fullWidth, style, scale, ox = 0, oy = 0)
     ctx.fillStyle = lb.fill; ctx.fill();
     ctx.lineWidth = edge; ctx.strokeStyle = outline; ctx.stroke();
     ctx.fillStyle = outline;
-    ctx.fillText(lb.text, cx, cy);
+    let x = cx - width / 2;
+    ctx.textAlign = 'left';
+    for (const part of parts) {
+      if (part.tex) {
+        const latex = part.latex;
+        if (latex) ctx.drawImage(latex.image, x, cy - latex.height / 2, latex.width, latex.height);
+        else ctx.fillText(part.tex, x, cy);
+        x += latex ? latex.width : ctx.measureText(part.tex).width;
+      } else {
+        ctx.fillText(part.text, x, cy);
+        x += part.measure.width;
+      }
+    }
+    ctx.textAlign = 'center';
   }
   return boxes;
 }
@@ -149,6 +285,7 @@ function saveJSON(key, value) {
 const HELP = [
   ['Click a part', 'square there, text box beside it'],
   ['Drag from a part', 'choose where the text goes'],
+  ['$...$', 'render math inside a label as LaTeX (for example $V_{out}=\\frac{V_s}{2}$)'],
   ['Drag text / square', 'move it'],
   ['Click a label', 'select it'],
   ['Double-click a label', 'edit its text'],
@@ -185,6 +322,8 @@ export class Labeler {
     this._cacheChain = Promise.resolve();
     this._raf = 0;
     this._loadToken = 0;
+    this._latexRequest = null;
+    this._latexFailed = new Set();
     this.entry = null;
     this.scale = 1; this.offset = [0, 0]; this.boxes = [];
     this.buildDom();
@@ -229,7 +368,7 @@ export class Labeler {
       <div class="bbl-status">Open some photos to start.</div>
       <div class="bbl-stage">
         <canvas class="bbl-canvas"></canvas>
-        <input class="bbl-entry" hidden spellcheck="false">
+        <input class="bbl-entry" hidden spellcheck="false" placeholder="Text or $LaTeX$">
         <div class="bbl-drop"><div>Drop photos here, or use Open photos</div><button class="bbl-resume" hidden>Reopen last session</button></div>
         <div class="bbl-help" hidden>${HELP.map(([k, v]) => `<div><b>${k}</b><span>${v}</span></div>`).join('')}</div>
       </div>`;
@@ -751,6 +890,11 @@ export class Labeler {
   async saveBlob(im = this.current) {
     const { mime } = this.outputName(im);
     await this.ensure(im);
+    try {
+      await prepareLatex(im.labels, im.width, this.style, 1);
+    } catch (err) {
+      throw new Error(`Could not render LaTeX: ${err.message}`);
+    }
     const cv = this.renderFull(im);
     return new Promise((resolve) => cv.toBlob(resolve, mime, JPEG_QUALITY));
   }
@@ -758,7 +902,7 @@ export class Labeler {
   async download(im = this.current) {
     if (!im) return false;
     let blob;
-    try { blob = await this.saveBlob(im); } catch (err) { console.warn('could not save', im.name, err); this.flash(`Could not open ${im.name}.`); return false; }
+    try { blob = await this.saveBlob(im); } catch (err) { console.warn('could not save', im.name, err); this.flash(`Could not save ${im.name}: ${err.message}`); return false; }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = this.outputName(im).name;
@@ -897,6 +1041,29 @@ export class Labeler {
     if (this.rubber) this.drawPreview(this.rubber.text, this.rubber.tip, this.style.fill, this.style.markerPct);
     if (this.entry) this.drawPreview(this.entry.disp, this.entry.tipDisp, this.entry.fill, this.style.markerPct);
     this.status();
+    this.prepareVisibleLatex(im);
+  }
+
+  /** Start formula rendering after the cheap synchronous preview draw, then
+   *  redraw once the SVG bitmap is ready. */
+  prepareVisibleLatex(im) {
+    const { fontPx } = metrics(im.width, this.style, this.scale);
+    const missing = im.labels.filter((lb) => latexParts(lb.text).some((part) =>
+      part.tex && !LATEX_CACHE.has(latexKey(part.tex, outlineFor(lb.fill), fontPx))));
+    if (!missing.length) return;
+    const request = `${im.key}\u0000${latexEm(fontPx)}\u0000${missing.map((lb) => `${lb.fill}:${lb.text}`).join('\u0001')}`;
+    if (request === this._latexRequest || this._latexFailed.has(request)) return;
+    this._latexRequest = request;
+    this.status('Rendering LaTeX (the first formula downloads the renderer)...');
+    prepareLatex(missing, im.width, this.style, this.scale).then(() => {
+      if (this._latexRequest === request) this._latexRequest = null;
+      if (this.current === im) this.refresh();
+    }).catch((err) => {
+      if (this._latexRequest === request) this._latexRequest = null;
+      this._latexFailed.add(request);
+      console.warn('could not render LaTeX', err);
+      if (this.current === im) this.flash(`Could not render LaTeX: ${err.message}`);
+    });
   }
   drawPreview(text, tip, fill, markerPct) {
     if (!tip) return;
@@ -1004,7 +1171,7 @@ export class Labeler {
     this.growEntry();
     el.focus(); el.select();
     this.refresh();
-    this.status('Type the label, Enter to place it, Esc to cancel');
+    this.status('Type text, or wrap LaTeX in $...$; Enter to place it, Esc to cancel');
   }
   growEntry() { this.entryEl.style.width = `${Math.max(6, this.entryEl.value.length + 2)}ch`; }
   commitEntry() {

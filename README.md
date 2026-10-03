@@ -19,6 +19,8 @@ it works offline.
    folder. Dropping files on the page works too. JPG, PNG, WebP and iPhone HEIC all open.
 2. **Click the part.** The square lands there and a text box opens beside it. Type, Enter.
    Or **drag** from the part to where the text should go.
+   Wrap a formula in dollar signs to render it as LaTeX, for example
+   `$V_{out}=\frac{V_s}{2}$`.
 3. **Drag the text** or **the square** to move them. **Click a label** to select it,
    **double-click** to edit its text.
 4. **Save** writes `name_labeled.jpg` and moves to the next photo. **Save all** does every
@@ -39,6 +41,17 @@ after a restore (the browser may ask once before the first save).
 
 Labels are remembered per photo in your browser, so reopening the same photo later
 restores them. Undo, redo, text size, square size and colour are all in the toolbar.
+
+## LaTeX labels
+
+Wrap math inside a label in `$...$` or `\(...\)`. Display-style delimiters `$$...$$` and
+`\[...\]` are accepted too. You can mix ordinary text and multiple formulas, for example
+`Input: $V_{in}=5\,\mathrm{V}$, output: $V_{out}=I\,R_1$`. Math is rendered in both the
+preview and the full-resolution saved image. Double-clicking a label opens its original text
+and LaTeX for editing.
+
+The MathJax renderer is downloaded the first time a formula is used (about 2 MB) and
+cached for offline use after that. Ordinary text labels do not load it.
 
 ## Keys
 

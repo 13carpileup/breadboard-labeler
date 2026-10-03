@@ -18,7 +18,7 @@
     window.addEventListener('unhandledrejection', (e) => { document.getElementById('results').textContent = 'FAIL unhandled rejection: ' + (e.reason && e.reason.stack || e.reason) + '\n\nFAILURES: 1'; document.title = 'DONE'; });
   </script>
   <script type="module">
-    import { Labeler, drawLabels, outlineFor, COLOURS, isImageFile, isHeic, FS_ACCESS, CACHE_MAX_AGE } from '../docs/app.js';
+    import { Labeler, drawLabels, prepareLatex, latexSource, outlineFor, COLOURS, isImageFile, isHeic, FS_ACCESS, CACHE_MAX_AGE } from '../docs/app.js';
 
     const out = [];
     let fails = 0;
@@ -261,6 +261,26 @@
       app3.container.remove();
       const f1bytes = await f1.arrayBuffer();
       check(f1bytes.byteLength === f1.size, 'original File object is untouched');
+
+      // ---- LaTeX labels ------------------------------------------------------
+      check(latexSource('$V_{out}=\\frac{V_s}{2}$') === 'V_{out}=\\frac{V_s}{2}' &&
+        latexSource('\\(R=220\\,\\Omega\\)') === 'R=220\\,\\Omega' && latexSource('price $5') === null,
+        'whole-label LaTeX delimiters are recognised without changing ordinary text');
+      const formula = [{ x: 400, y: 150, text: '$\\frac{V_{out}}{R_1}$', tip: null, fill: '#FFEB3B', marker: 2.5 }];
+      const mathStyle = { fontPct: 6, markerPct: 2.5 };
+      const mathCanvas = document.createElement('canvas'); mathCanvas.width = 800; mathCanvas.height = 300;
+      const mathCtx = mathCanvas.getContext('2d');
+      const rawBox = drawLabels(mathCtx, formula, 800, mathStyle, 1)[0];
+      await prepareLatex(formula, 800, mathStyle, 1);
+      mathCtx.clearRect(0, 0, 800, 300);
+      const mathBox = drawLabels(mathCtx, formula, 800, mathStyle, 1)[0];
+      check(mathBox[2] - mathBox[0] < (rawBox[2] - rawBox[0]) * 0.7,
+        `LaTeX is typeset instead of drawing its source (${Math.round(rawBox[2] - rawBox[0])}px source, ${Math.round(mathBox[2] - mathBox[0])}px formula)`);
+      const mathPixels = mathCtx.getImageData(Math.floor(mathBox[0] + 5), Math.floor(mathBox[1] + 5),
+        Math.max(1, Math.floor(mathBox[2] - mathBox[0] - 10)), Math.max(1, Math.floor(mathBox[3] - mathBox[1] - 10))).data;
+      let darkMathPixels = 0;
+      for (let i = 0; i < mathPixels.length; i += 4) if (mathPixels[i + 3] && mathPixels[i] < 80 && mathPixels[i + 1] < 80 && mathPixels[i + 2] < 80) darkMathPixels++;
+      check(darkMathPixels > 20, `typeset formula is painted onto the canvas (${darkMathPixels} dark pixels)`);
 
       // ---- HEIC via the lazily loaded decoder ---------------------------------
       const heicBlob = await (await fetch('./sample.heic')).blob();
