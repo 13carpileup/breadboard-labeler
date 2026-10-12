@@ -316,6 +316,7 @@ export class Labeler {
     this.custom = (loadJSON(PRESETS_KEY, []) || []).filter((c) => /^#[0-9A-F]{6}$/i.test(c)).map((c) => c.toUpperCase());
     this.selected = null;
     this.textOnly = false;
+    this.pickingColour = false;
     this.press = null; this.mode = null; this.moved = false; this.grab = [0, 0];
     this.rubber = null;
     this.base = null;            // screen-sized copy of the current photo, redrawn from on every refresh
@@ -362,6 +363,7 @@ export class Labeler {
         <span class="bbl-group" title="Square size ([ / ])">&#9632; <button data-act="markerDown">&minus;</button><button data-act="markerUp">+</button></span>
         <span class="bbl-swatches"></span>
         <label class="bbl-hex-label">Hex <input type="text" class="bbl-hex" value="#FFEB3B" aria-label="Hex colour" maxlength="7" pattern="#?[0-9a-fA-F]{6}" spellcheck="false" autocomplete="off"></label>
+        <button data-act="pickColour" class="bbl-pick bbl-toggle" title="Pick a colour from the photo">Pick from photo</button>
         <input type="color" class="bbl-colour" title="Choose any colour (K)" aria-label="Choose any colour">
         <button data-act="addPreset" class="bbl-add" title="Save the current colour as a preset (right-click a custom preset to remove it)">+</button>
         <button data-act="textOnly" class="bbl-toggle" title="Next label: text only, no square (or shift-click)">Text only</button>
@@ -502,6 +504,7 @@ export class Labeler {
       fontUp: () => this.adjustFont(0.25), fontDown: () => this.adjustFont(-0.25),
       markerUp: () => this.adjustMarker(0.25), markerDown: () => this.adjustMarker(-0.25),
       textOnly: () => { this.textOnly = !this.textOnly; this.textOnlyBtn.classList.toggle('bbl-on', this.textOnly); },
+      pickColour: () => this.toggleColourPick(),
       help: () => { this.helpEl.hidden = !this.helpEl.hidden; },
       addPreset: () => this.addPreset(),
     };
@@ -1110,6 +1113,22 @@ export class Labeler {
   // ---- pointer --------------------------------------------------------- //
   onPress(e) {
     if (!this.current || !this.current.bitmap || e.button !== 0) return;
+    if (this.pickingColour) {
+      const [x, y] = this.pos(e);
+      const [left, top] = this.offset;
+      const right = left + this.current.width * this.scale;
+      const bottom = top + this.current.height * this.scale;
+      if (x < left || x >= right || y < top || y >= bottom) return;
+      const [ix, iy] = this.toImage(x, y);
+      const pixelCanvas = document.createElement('canvas');
+      pixelCanvas.width = pixelCanvas.height = 1;
+      const pixelCtx = pixelCanvas.getContext('2d', { willReadFrequently: true });
+      pixelCtx.drawImage(this.current.bitmap, Math.floor(ix), Math.floor(iy), 1, 1, 0, 0, 1, 1);
+      const [r, g, b] = pixelCtx.getImageData(0, 0, 1, 1).data;
+      this.toggleColourPick(false);
+      this.applyColour(`#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase()}`);
+      return;
+    }
     if (this.entry) this.commitEntry();
     try { this.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic event */ }
     const [x, y] = this.pos(e);
@@ -1226,6 +1245,15 @@ export class Labeler {
       this.refresh();
     }
   }
+  toggleColourPick(force) {
+    this.pickingColour = force ?? !this.pickingColour;
+    const button = this.container.querySelector('[data-act="pickColour"]');
+    button.classList.toggle('bbl-on', this.pickingColour);
+    button.setAttribute('aria-pressed', String(this.pickingColour));
+    this.canvas.style.cursor = this.pickingColour ? 'copy' : 'crosshair';
+    if (this.pickingColour) this.flash('Click a point in the photo to use its colour.');
+    else this.status();
+  }
   cycleColour() {
     const list = this.presets();
     const i = list.indexOf(this.currentColour());
@@ -1265,7 +1293,7 @@ export class Labeler {
       p: () => this.step(-1), arrowleft: () => this.step(-1),
       z: () => (e.ctrlKey && e.shiftKey ? this.redo() : this.undo()), y: () => this.redo(),
       delete: () => this.deleteSelected(), backspace: () => this.deleteSelected(),
-      escape: () => { if (this.selected !== null) { this.selected = null; this.refresh(); } else this.helpEl.hidden = true; },
+      escape: () => { if (this.pickingColour) this.toggleColourPick(false); else if (this.selected !== null) { this.selected = null; this.refresh(); } else this.helpEl.hidden = true; },
       '+': () => this.adjustFont(0.25), '=': () => this.adjustFont(0.25), '-': () => this.adjustFont(-0.25), '_': () => this.adjustFont(-0.25),
       '[': () => this.adjustMarker(-0.25), ']': () => this.adjustMarker(0.25),
       c: () => this.cycleColour(), k: () => this.colourInput.click(),

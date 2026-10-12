@@ -68,6 +68,7 @@ cached for offline use after that. Ordinary text labels do not load it.
 | [ / ] | smaller / bigger square |
 | C | cycle preset colours: yellow, orange, blue, pink, green, brown, red, white, light grey, black, then your own |
 | K | pick any colour |
+| Pick from photo | click the button, then click a point in the photo to sample its colour; Esc cancels |
 | Hex field | type or paste a colour such as `#12ABEF`; the picker and current label update immediately |
 | + (toolbar) | save the current colour as a preset; right-click a custom preset to remove it |
 | Shift-click | text-only label, no square (the "Text only" button does the same on touch screens) |
