@@ -298,6 +298,7 @@ const HELP = [
   ['+ / -', 'text size'],
   ['[ / ]', 'square size'],
   ['C / K', 'cycle colours / colour picker'],
+  ['Hex field', 'type or paste a colour such as #12ABEF'],
   ['+ button', 'save the current colour as a preset (right-click a custom one to remove)'],
   ['Shift-click', 'text only, no square'],
 ];
@@ -360,7 +361,8 @@ export class Labeler {
         <span class="bbl-group" title="Text size (+ / -)">T <button data-act="fontDown">&minus;</button><button data-act="fontUp">+</button></span>
         <span class="bbl-group" title="Square size ([ / ])">&#9632; <button data-act="markerDown">&minus;</button><button data-act="markerUp">+</button></span>
         <span class="bbl-swatches"></span>
-        <input type="color" class="bbl-colour" title="Any colour (K)">
+        <label class="bbl-hex-label">Hex <input type="text" class="bbl-hex" value="#FFEB3B" aria-label="Hex colour" maxlength="7" pattern="#?[0-9a-fA-F]{6}" spellcheck="false" autocomplete="off"></label>
+        <input type="color" class="bbl-colour" title="Choose any colour (K)" aria-label="Choose any colour">
         <button data-act="addPreset" class="bbl-add" title="Save the current colour as a preset (right-click a custom preset to remove it)">+</button>
         <button data-act="textOnly" class="bbl-toggle" title="Next label: text only, no square (or shift-click)">Text only</button>
         <button data-act="help" title="Keys">?</button>
@@ -388,6 +390,7 @@ export class Labeler {
     this.dropEl = c.querySelector('.bbl-drop');
     this.helpEl = c.querySelector('.bbl-help');
     this.colourInput = c.querySelector('.bbl-colour');
+    this.hexInput = c.querySelector('.bbl-hex');
     this.textOnlyBtn = c.querySelector('[data-act=textOnly]');
     this.formatSelect = c.querySelector('.bbl-format');
     this.formatSelect.value = this.style.format;
@@ -461,6 +464,15 @@ export class Labeler {
       e.preventDefault(); this.removePreset(b.dataset.colour);
     });
     this.colourInput.addEventListener('input', () => this.applyColour(this.colourInput.value.toUpperCase()));
+    this.hexInput.addEventListener('input', () => {
+      const match = /^#?([0-9a-f]{6})$/i.exec(this.hexInput.value.trim());
+      this.hexInput.setAttribute('aria-invalid', String(!match));
+      if (match) this.applyColour(`#${match[1].toUpperCase()}`);
+    });
+    this.hexInput.addEventListener('blur', () => {
+      if (this.hexInput.getAttribute('aria-invalid') === 'true') this.hexInput.value = this.currentColour();
+      this.hexInput.removeAttribute('aria-invalid');
+    });
     this.formatSelect.addEventListener('change', () => this.setFormat(this.formatSelect.value));
     const cv = this.canvas;
     cv.addEventListener('pointerdown', (e) => this.onPress(e));
@@ -1084,7 +1096,10 @@ export class Labeler {
     const where = FS_ACCESS && s.saveTo === 'folder' && im.dir ? ' into its folder' : ' to Downloads';
     const base = `${im.name}${im.dirty ? ' *' : ''}  ·  labels: ${im.labels.length}${sel}  ·  text ${s.fontPct}%  square ${s.markerPct}%  colour ${s.fill}  ·  saves as ${s.format.toUpperCase()}${where}`;
     this.statusEl.textContent = extra ? `${extra}   |   ${base}` : base;
-    this.colourInput.value = s.fill;
+    const fill = this.currentColour();
+    this.colourInput.value = fill;
+    this.hexInput.value = fill;
+    this.hexInput.removeAttribute('aria-invalid');
   }
   flash(text) {
     this.status(text);

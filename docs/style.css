@@ -39,6 +39,12 @@ body {
 .bbl-toolbar .bbl-swatch:hover { border-color: #fff; }
 .bbl-toolbar .bbl-swatch-custom { border-style: dashed; }
 .bbl-toolbar .bbl-add { min-width: 28px; padding: 4px 8px; font-weight: 700; }
+.bbl-hex-label { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+.bbl-hex {
+  width: 82px; padding: 5px 6px; color: var(--text); background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 6px; font: 12px ui-monospace, monospace;
+}
+.bbl-hex[aria-invalid="true"] { border-color: #ff6262; }
 .bbl-format {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 6px 8px; font: inherit; cursor: pointer;
